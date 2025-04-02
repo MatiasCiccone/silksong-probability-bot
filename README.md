@@ -2,7 +2,7 @@
 
 A Twitter bot that calculates and tweets the daily probability of Hollow Knight: Silksong being released, counting down to December 31, 2025.
 
-![Silksong Release Probability Bot](https://placeholder.svg?height=300&width=600&text=Silksong+Release+Probability+Bot)
+![Silksong Release Probability Bot](https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1030300/capsule_616x353.jpg)
 
 ## 🎮 Project Objective
 
