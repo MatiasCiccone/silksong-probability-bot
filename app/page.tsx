@@ -98,14 +98,25 @@ Days elapsed: ${data.daysElapsed} of ${data.totalDays} total days
 #Silksong #HollowKnight #TeamCherry`
 }
 
-// Format date for display
+// Format date for display in a compact way to prevent line breaks
 function formatDate(dateString: string) {
   const date = new Date(dateString)
-  return date.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  })
+  return date
+    .toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    })
+    .replace(", ", " ") // Replace comma with space to keep it on one line
+}
+
+// Format raw probability value to prevent overflow
+function formatRawValue(value: number) {
+  // If the value is very small, show fewer decimal places
+  if (value < 1) {
+    return value.toFixed(8)
+  }
+  return value.toString()
 }
 
 export default function Home() {
@@ -236,7 +247,7 @@ export default function Home() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-background">
-      <div className="max-w-md w-full space-y-8 bg-card text-card-foreground p-8 rounded-lg border-2 border-gray-700">
+      <div className="max-w-2xl w-full space-y-8 bg-card text-card-foreground p-8 rounded-lg border-2 border-gray-700">
         <div className="text-center">
           <h1 className="text-3xl font-bold mb-4">Silksong Release Probability Bot</h1>
           <p className="text-lg mb-6">This bot tweets the probability of Silksong release every day at 00:00 UTC.</p>
@@ -311,8 +322,14 @@ export default function Home() {
 
             {showProbabilityTable && (
               <div className="mt-3 border border-gray-700 rounded-md overflow-hidden">
-                <div className="max-h-96 overflow-y-auto">
-                  <table className="w-full text-sm">
+                <div className="max-h-[500px] overflow-y-auto">
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      <col style={{ width: "25%" }} />
+                      <col style={{ width: "15%" }} />
+                      <col style={{ width: "25%" }} />
+                      <col style={{ width: "35%" }} />
+                    </colgroup>
                     <thead className="bg-gray-800 sticky top-0">
                       <tr>
                         <th className="px-4 py-2 text-left">Date</th>
@@ -333,10 +350,12 @@ export default function Home() {
                                 : "bg-gray-800"
                           }
                         >
-                          <td className="px-4 py-2">{formatDate(date.date)}</td>
+                          <td className="px-4 py-2 whitespace-nowrap">{formatDate(date.date)}</td>
                           <td className="px-4 py-2 text-right">{date.daysRemaining}</td>
                           <td className="px-4 py-2 text-right font-mono">{date.probability.toFixed(3)}%</td>
-                          <td className="px-4 py-2 text-right font-mono">{date.probability}%</td>
+                          <td className="px-4 py-2 text-right font-mono truncate" title={`${date.probability}%`}>
+                            {formatRawValue(date.probability)}%
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -368,7 +387,7 @@ export default function Home() {
                   )}
                   {result.data.tweetText && (
                     <div className="mt-2 p-3 bg-gray-800 rounded border border-gray-700">
-                      <p className="whitespace-pre-wrap">{result.data.tweetText}</p>
+                      <p className="whitespace-pre-wrap text-sm">{result.data.tweetText}</p>
                     </div>
                   )}
                 </div>
