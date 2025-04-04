@@ -6,6 +6,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Footer } from "@/components/footer"
+import { Copy, Check, AlertTriangle, ExternalLink } from "lucide-react"
 
 // The target date is December 31, 2025
 const TARGET_DATE = new Date("2025-12-31T00:00:00Z")
@@ -126,6 +127,8 @@ export default function Home() {
   const [exampleTweet, setExampleTweet] = useState("")
   const [showProbabilityTable, setShowProbabilityTable] = useState(false)
   const [allDates, setAllDates] = useState<ReturnType<typeof calculateProbabilityForDate>[]>([])
+  const [copied, setCopied] = useState(false)
+  const [apiStatus, setApiStatus] = useState<"unknown" | "working" | "error">("unknown")
   const [result, setResult] = useState<{
     success: boolean
     message: string
@@ -184,10 +187,14 @@ export default function Home() {
       const data = await response.json()
       setResult(data)
 
-      if (!data.success) {
+      if (data.success) {
+        setApiStatus("working")
+      } else {
+        setApiStatus("error")
         console.error("Tweet error:", data.error || data.message)
       }
     } catch (error) {
+      setApiStatus("error")
       console.error("Error posting tweet:", error)
       setResult({
         success: false,
@@ -224,13 +231,14 @@ export default function Home() {
       setResult(data)
 
       if (data.success) {
+        setApiStatus("working")
         setCustomTweet("") // Clear the input on success
-      }
-
-      if (!data.success) {
+      } else {
+        setApiStatus("error")
         console.error("Tweet error:", data.error || data.message)
       }
     } catch (error) {
+      setApiStatus("error")
       console.error("Error posting tweet:", error)
       setResult({
         success: false,
@@ -245,6 +253,55 @@ export default function Home() {
   // Check if selected date is before the start date
   const isBeforeStartDate = selectedDate ? new Date(selectedDate + "T00:00:00Z") < START_DATE : false
 
+  const handleTriggerCron = async () => {
+    try {
+      setIsLoading(true)
+      setResult(null)
+
+      const response = await fetch("/api/trigger-cron")
+      const data = await response.json()
+      setResult(data)
+
+      if (data.success) {
+        setApiStatus("working")
+      } else {
+        setApiStatus("error")
+        console.error("Cron trigger error:", data.error || data.message)
+      }
+    } catch (error) {
+      setApiStatus("error")
+      console.error("Error triggering cron job:", error)
+      setResult({
+        success: false,
+        message: "An error occurred while triggering the cron job",
+        error: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Copy tweet text to clipboard
+  const copyTweetToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(exampleTweet)
+      setCopied(true)
+
+      // Reset the copied state after 2 seconds
+      setTimeout(() => {
+        setCopied(false)
+      }, 2000)
+    } catch (err) {
+      console.error("Failed to copy text: ", err)
+    }
+  }
+
+  // Open Twitter compose page with pre-filled tweet
+  const openTwitterCompose = () => {
+    const encodedTweet = encodeURIComponent(exampleTweet)
+    window.open(`https://twitter.com/intent/tweet?text=${encodedTweet}`, "_blank")
+  }
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-background">
       <div className="max-w-2xl w-full space-y-8 bg-card text-card-foreground p-8 rounded-lg border-2 border-gray-700">
@@ -254,9 +311,34 @@ export default function Home() {
           <p className="text-muted-foreground mb-8">Counting down to December 31, 2025</p>
         </div>
 
+        {apiStatus === "error" && (
+          <div className="bg-red-900/30 border border-red-800 rounded-md p-4 mb-4">
+            <div className="flex items-start">
+              <AlertTriangle className="h-5 w-5 text-red-400 mt-0.5 mr-2 flex-shrink-0" />
+              <div>
+                <h3 className="font-medium text-red-100">Twitter API Error</h3>
+                <p className="text-sm text-red-200 mt-1">
+                  The Twitter API is currently returning errors. This could be due to rate limits, authentication
+                  issues, or API changes.
+                </p>
+                <div className="mt-3">
+                  <p className="text-sm font-medium text-red-100">Manual posting options:</p>
+                  <ul className="list-disc list-inside text-sm text-red-200 mt-1 space-y-1">
+                    <li>Use the "Copy" button in the Tweet Preview section to copy the tweet text</li>
+                    <li>Click the "Post on Twitter" button to open Twitter with the tweet pre-filled</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-6">
-          <Button onClick={handleDailyTweet} disabled={isLoading} className="w-full">
+          <Button onClick={handleDailyTweet} disabled={isLoading} className="w-full mb-2">
             {isLoading ? "Posting Tweet..." : "Post Daily Probability Tweet"}
+          </Button>
+          <Button onClick={handleTriggerCron} disabled={isLoading} variant="secondary" className="w-full">
+            Manually Trigger Cron Job
           </Button>
 
           <div className="pt-4 border-t border-border">
@@ -305,8 +387,34 @@ export default function Home() {
                 </div>
               )}
 
-              <div className="mt-3 p-4 bg-gray-800 rounded-md border border-gray-700">
-                <h3 className="text-sm font-semibold mb-2">Tweet preview for {selectedDate}:</h3>
+              <div className="mt-3 p-4 bg-gray-800 rounded-md border border-gray-700 relative">
+                <div className="flex justify-between items-start mb-2">
+                  <h3 className="text-sm font-semibold">Tweet preview for {selectedDate}:</h3>
+                  <div className="flex space-x-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-gray-300 hover:text-white"
+                      onClick={copyTweetToClipboard}
+                      aria-label="Copy tweet text"
+                      title="Copy tweet text"
+                    >
+                      {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      <span className="ml-1 text-xs">{copied ? "Copied!" : "Copy"}</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-gray-300 hover:text-white"
+                      onClick={openTwitterCompose}
+                      aria-label="Post on Twitter"
+                      title="Post on Twitter"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      <span className="ml-1 text-xs">Post on Twitter</span>
+                    </Button>
+                  </div>
+                </div>
                 <p className="whitespace-pre-wrap text-sm">{exampleTweet}</p>
               </div>
             </div>

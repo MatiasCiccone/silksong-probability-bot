@@ -56,51 +56,93 @@ function calculateProbability() {
 }
 
 // Create tweet text
-function createTweetText(data: {
-  daysRemaining: number
-  totalDays: number
-  daysElapsed: number
-  probability: number
-  date: string
-}) {
+function createTweetText(
+  data: {
+    daysRemaining: number
+    totalDays: number
+    daysElapsed: number
+    probability: number
+    date: string
+  },
+  options?: { testMode?: boolean; testId?: string },
+) {
   // Format probability to show 3 decimal places
   const formattedProbability = data.probability.toFixed(3)
 
-  return `🎮 Silksong Release Probability Update (${data.date})
+  let tweetText = `🎮 Silksong Release Probability Update (${data.date})
 
 Probability: ${formattedProbability}%
 Days remaining until Dec 31, 2025: ${data.daysRemaining}
 Days elapsed: ${data.daysElapsed} of ${data.totalDays} total days
 
 #Silksong #HollowKnight #TeamCherry`
+
+  // Add test identifier if in test mode
+  if (options?.testMode && options?.testId) {
+    tweetText += `\n\n[TEST ${options.testId}]`
+  }
+
+  return tweetText
 }
 
 // Post the daily tweet
 export async function POST(request: Request) {
   const requestId = `tweet_${Date.now()}`
+  let requestBody = {}
 
   try {
-    logger.info("Calculating probability for daily tweet", { requestId })
+    // Try to parse the request body if it exists
+    try {
+      const text = await request.text()
+      if (text.trim()) {
+        requestBody = JSON.parse(text)
+        logger.info(`Request body parsed successfully`, { requestId, bodyLength: text.length })
+      } else {
+        logger.info(`Empty request body received`, { requestId })
+      }
+    } catch (e) {
+      logger.warn(`Failed to parse request body`, {
+        requestId,
+        error: e instanceof Error ? e.message : String(e),
+        headers: Object.fromEntries([...request.headers.entries()]),
+      })
+      // If there's no body or it can't be parsed, continue with empty object
+      requestBody = {}
+    }
+
+    const { testMode, testId } = requestBody as { testMode?: boolean; testId?: string }
+
+    logger.info(`Calculating probability for daily tweet`, {
+      requestId,
+      testMode: testMode || false,
+      testId: testId || undefined,
+    })
 
     // Calculate probability
     const data = calculateProbability()
 
-    logger.info("Probability calculated", {
+    logger.info(`Probability calculated`, {
       requestId,
       probability: data.probability,
       daysRemaining: data.daysRemaining,
       daysElapsed: data.daysElapsed,
       totalDays: data.totalDays,
+      testMode: testMode || false,
     })
 
-    // Create tweet text
-    const tweetText = createTweetText(data)
+    // Create tweet text with test mode options if provided
+    const tweetText = createTweetText(data, { testMode, testId })
 
     // Get the base URL from the request
     const url = new URL(request.url)
     const baseUrl = `${url.protocol}//${url.host}`
 
-    logger.info("Posting daily tweet", { requestId, textLength: tweetText.length })
+    logger.info(`Posting daily tweet`, {
+      requestId,
+      textLength: tweetText.length,
+      testMode: testMode || false,
+      endpoint: `${baseUrl}/api/twitter-v2`,
+    })
 
     // Call our Twitter API v2 route to post the tweet with retry logic
     const response = await retry(
@@ -113,32 +155,57 @@ export async function POST(request: Request) {
           body: JSON.stringify({ text: tweetText }),
         })
 
-        const result = await res.json()
+        // Get the response as text first to ensure we can log it even if JSON parsing fails
+        const responseText = await res.text()
+        let result
+
+        try {
+          result = JSON.parse(responseText)
+        } catch (parseError) {
+          logger.error(`Failed to parse Twitter API response`, {
+            requestId,
+            responseStatus: res.status,
+            responseText,
+            error: parseError instanceof Error ? parseError.message : String(parseError),
+          })
+          throw new Error(`Twitter API returned invalid JSON: ${responseText}`)
+        }
 
         if (!result.success) {
+          logger.error(`Twitter API returned error`, {
+            requestId,
+            responseStatus: res.status,
+            error: result.error || result.message || "Unknown error",
+            fullResponse: result,
+          })
           throw new Error(result.error || result.message || "Unknown error in Twitter API")
         }
 
         return result
       },
       {
-        retries: 3,
+        retries: 1,
         initialDelay: 1000,
         maxDelay: 5000,
         onRetry: (error, attempt) => {
-          logger.warn(`Tweet retry attempt ${attempt} after error`, { error: error.message, requestId })
+          logger.warn(`Tweet retry attempt ${attempt} after error`, {
+            requestId,
+            error: error instanceof Error ? error.message : String(error),
+          })
         },
       },
     )
 
-    logger.info("Daily tweet posted successfully", {
+    logger.info(`Daily tweet posted successfully`, {
       requestId,
       tweetId: response.data.tweetId,
+      testMode: testMode || false,
     })
 
     return NextResponse.json({
       success: true,
-      message: "Tweet posted successfully",
+      message: testMode ? "Test tweet posted successfully" : "Tweet posted successfully",
+      requestId,
       data: {
         tweetId: response.data.tweetId,
         probability: data.probability,
@@ -149,7 +216,22 @@ export async function POST(request: Request) {
       },
     })
   } catch (error) {
-    logger.error("Failed to post daily tweet", { error, requestId })
+    // Enhanced error logging
+    logger.error(`Failed to post daily tweet`, {
+      requestId,
+      error:
+        error instanceof Error
+          ? {
+              message: error.message,
+              stack: error.stack,
+              name: error.name,
+              // Include any additional properties on the error object
+              ...Object.fromEntries(
+                Object.entries(error).filter(([key]) => !["message", "stack", "name"].includes(key)),
+              ),
+            }
+          : error,
+    })
 
     return NextResponse.json(
       {

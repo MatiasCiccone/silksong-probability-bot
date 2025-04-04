@@ -13,10 +13,16 @@ export async function GET(request: Request) {
     // Get the base URL from the request
     const url = new URL(request.url)
     const baseUrl = `${url.protocol}//${url.host}`
+    logger.info(`Determined base URL for API calls`, { executionId, baseUrl })
 
     // Call our tweet endpoint with retry logic
     const response = await retry(
       async () => {
+        logger.info(`Sending request to tweet endpoint`, {
+          executionId,
+          endpoint: `${baseUrl}/api/tweet`,
+        })
+
         const res = await fetch(`${baseUrl}/api/tweet`, {
           method: "POST",
           headers: {
@@ -24,20 +30,43 @@ export async function GET(request: Request) {
           },
         })
 
-        const data = await res.json()
+        // Get the response as text first to ensure we can log it even if JSON parsing fails
+        const responseText = await res.text()
+        let data
+
+        try {
+          data = JSON.parse(responseText)
+        } catch (parseError) {
+          logger.error(`Failed to parse tweet endpoint response`, {
+            executionId,
+            responseStatus: res.status,
+            responseText,
+            error: parseError instanceof Error ? parseError.message : String(parseError),
+          })
+          throw new Error(`Tweet endpoint returned invalid JSON: ${responseText}`)
+        }
 
         if (!data.success) {
+          logger.error(`Tweet endpoint returned error`, {
+            executionId,
+            responseStatus: res.status,
+            error: data.error || data.message || "Unknown error",
+            fullResponse: data,
+          })
           throw new Error(data.message || "Unknown error in tweet endpoint")
         }
 
         return { res, data }
       },
       {
-        retries: 5, // More retries for the cron job
+        retries: 1,
         initialDelay: 2000,
-        maxDelay: 30000, // Longer max delay
+        maxDelay: 30000,
         onRetry: (error, attempt) => {
-          logger.warn(`Cron retry attempt ${attempt} after error`, { error: error.message, executionId })
+          logger.warn(`Cron retry attempt ${attempt} after error`, {
+            executionId,
+            error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
+          })
         },
       },
     )
@@ -60,9 +89,12 @@ export async function GET(request: Request) {
       // await fetch('https://cronitor.link/p/your-monitor-id', { method: 'GET' });
 
       // For now, we'll just log it
-      logger.info("Monitoring ping would be sent here", { executionId })
+      logger.info(`Monitoring ping would be sent here`, { executionId })
     } catch (monitorError) {
-      logger.warn("Failed to send monitoring ping", { error: String(monitorError) })
+      logger.warn(`Failed to send monitoring ping`, {
+        executionId,
+        error: monitorError instanceof Error ? monitorError.message : String(monitorError),
+      })
       // Don't throw this error as it's not critical
     }
 
@@ -75,7 +107,24 @@ export async function GET(request: Request) {
     })
   } catch (error) {
     const executionTime = Date.now() - startTime
-    logger.error(`Cron job failed after ${executionTime}ms`, error)
+
+    // Enhanced error logging
+    logger.error(`Cron job failed after ${executionTime}ms`, {
+      executionId,
+      executionTime,
+      error:
+        error instanceof Error
+          ? {
+              message: error.message,
+              stack: error.stack,
+              name: error.name,
+              // Include any additional properties on the error object
+              ...Object.fromEntries(
+                Object.entries(error).filter(([key]) => !["message", "stack", "name"].includes(key)),
+              ),
+            }
+          : error,
+    })
 
     // Send a failure alert (optional)
     try {
@@ -86,16 +135,22 @@ export async function GET(request: Request) {
       // });
 
       // For now, we'll just log it
-      logger.info("Alert would be sent here", { executionId, error: String(error) })
+      logger.info(`Alert would be sent here`, {
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+      })
     } catch (alertError) {
-      logger.error("Failed to send alert", alertError)
+      logger.error(`Failed to send alert`, {
+        executionId,
+        error: alertError instanceof Error ? alertError.message : String(alertError),
+      })
     }
 
     return NextResponse.json(
       {
         success: false,
         message: "Cron job failed",
-        error: String(error),
+        error: error instanceof Error ? error.message : String(error),
         executionTime,
         executionId,
       },
