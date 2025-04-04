@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { logger } from "@/lib/logger"
 import { retry } from "@/lib/retry"
+import { cookies } from "next/headers"
 
 // The target date is December 31, 2025
 const TARGET_DATE = new Date("2025-12-31T00:00:00Z")
@@ -91,6 +92,24 @@ export async function POST(request: Request) {
   let requestBody = {}
 
   try {
+    // Check for API key authentication or session token
+    const apiKey = process.env.API_SECRET_KEY
+    const authHeader = request.headers.get("authorization")
+    const isCronJob = request.headers.get("x-cron-job") === "true"
+
+    // Check for session token in cookies
+    const sessionCookie = cookies().get("session_token")
+    const hasValidSession = sessionCookie?.value ? true : false
+
+    // Skip auth check if this is called from the cron job or has valid session
+    if (!isCronJob && authHeader !== `Bearer ${apiKey}` && !hasValidSession) {
+      logger.warn(`Unauthorized access attempt to tweet endpoint`, {
+        requestId,
+        headers: Object.fromEntries([...request.headers.entries()]),
+      })
+      return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 })
+    }
+
     // Try to parse the request body if it exists
     try {
       const text = await request.text()
@@ -151,6 +170,8 @@ export async function POST(request: Request) {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey || ""}`,
+            "X-Cron-Job": isCronJob ? "true" : "false",
           },
           body: JSON.stringify({ text: tweetText }),
         })

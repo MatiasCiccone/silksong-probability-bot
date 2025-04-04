@@ -7,11 +7,21 @@ export async function GET(request: Request) {
   const startTime = Date.now()
   const executionId = `cron_${startTime}`
 
-  logger.info(`Cron job started`, { executionId })
+  // Check if this is a manual test or the actual cron job
+  const url = new URL(request.url)
+  const isManualTest = url.searchParams.has("test")
+
+  // Only generate a test ID if this is a manual test
+  const testId = isManualTest ? Math.random().toString(36).substring(2, 8) : undefined
+
+  logger.info(`Cron job started`, {
+    executionId,
+    isManualTest,
+    testId: testId || "none",
+  })
 
   try {
     // Get the base URL from the request
-    const url = new URL(request.url)
     const baseUrl = `${url.protocol}//${url.host}`
     logger.info(`Determined base URL for API calls`, { executionId, baseUrl })
 
@@ -21,13 +31,22 @@ export async function GET(request: Request) {
         logger.info(`Sending request to tweet endpoint`, {
           executionId,
           endpoint: `${baseUrl}/api/tweet`,
+          isManualTest,
+          testId: testId || "none",
         })
 
+        // Only include testMode and testId if this is a manual test
+        const body = isManualTest ? JSON.stringify({ testMode: true, testId }) : undefined
+
+        // Include the API key in the request to the tweet endpoint
         const res = await fetch(`${baseUrl}/api/tweet`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.API_SECRET_KEY || ""}`,
+            "X-Cron-Job": "true", // Add a special header to identify this as a cron job request
           },
+          body: body,
         })
 
         // Get the response as text first to ensure we can log it even if JSON parsing fails
@@ -81,6 +100,8 @@ export async function GET(request: Request) {
       executionTime,
       tweetId: data.data.tweetId,
       probability: data.data.probability,
+      isManualTest,
+      testId: testId || "none",
     })
 
     // Send a ping to a monitoring service (optional)
@@ -100,9 +121,11 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: "Cron job executed successfully",
+      message: isManualTest ? "Manual cron test executed successfully" : "Cron job executed successfully",
       executionTime,
       executionId,
+      isManualTest,
+      testId: testId || undefined,
       data,
     })
   } catch (error) {
@@ -112,6 +135,8 @@ export async function GET(request: Request) {
     logger.error(`Cron job failed after ${executionTime}ms`, {
       executionId,
       executionTime,
+      isManualTest,
+      testId: testId || "none",
       error:
         error instanceof Error
           ? {
@@ -153,6 +178,8 @@ export async function GET(request: Request) {
         error: error instanceof Error ? error.message : String(error),
         executionTime,
         executionId,
+        isManualTest,
+        testId: testId || undefined,
       },
       { status: 500 },
     )

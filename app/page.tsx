@@ -6,7 +6,11 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Footer } from "@/components/footer"
-import { Copy, Check, AlertTriangle, ExternalLink } from "lucide-react"
+import { Copy, Check, AlertTriangle, ExternalLink, LogOut } from "lucide-react"
+import { useRouter } from "next/navigation"
+
+// Add this after the imports
+const isDev = process.env.NODE_ENV === "development" || process.env.VERCEL_ENV === "preview"
 
 // The target date is December 31, 2025
 const TARGET_DATE = new Date("2025-12-31T00:00:00Z")
@@ -24,7 +28,9 @@ function calculateProbabilityForDate(date: Date) {
 
   // If we're before the start date, set days elapsed to 0
   let daysElapsed = 0
+  let probability = 0
 
+  // Only calculate probability if we're at or after the start date
   if (date >= START_DATE) {
     // Calculate days elapsed since start date
     // If it's the start date, days elapsed should be 1
@@ -33,16 +39,7 @@ function calculateProbabilityForDate(date: Date) {
     } else {
       daysElapsed = Math.floor((date.getTime() - START_DATE.getTime()) / msPerDay) + 1
     }
-  }
 
-  // Calculate probability using the formula 1/daysRemaining * 100
-  // This will give us the expected values:
-  // - December 29, 2025: 1/3 * 100 = 33.33%
-  // - December 30, 2025: 1/2 * 100 = 50.00%
-  // - December 31, 2025: 1/1 * 100 = 100.00%
-  let probability = 0
-
-  if (daysElapsed > 0) {
     // Calculate days remaining until target date (including the target date)
     const daysToTarget = daysRemaining + 1
 
@@ -59,17 +56,28 @@ function calculateProbabilityForDate(date: Date) {
   }
 }
 
-// Generate all dates and probabilities from start to target
+// Generate all dates and probabilities from April 2 to December 31, 2025
 function generateAllDatesAndProbabilities() {
   const dates = []
   const msPerDay = 1000 * 60 * 60 * 24
 
-  // Clone the start date
-  let currentDate = new Date(START_DATE.getTime())
+  // Start from April 2, 2025 (one day before START_DATE)
+  // Use explicit UTC time to avoid timezone issues
+  const tableStartDate = new Date(Date.UTC(2025, 3, 2)) // Month is 0-indexed, so 3 = April
 
-  // Loop through all dates until we reach the target date
-  while (currentDate <= TARGET_DATE) {
+  // End at December 31, 2025
+  const endDate = new Date(Date.UTC(2025, 11, 31)) // Month is 0-indexed, so 11 = December
+
+  // Clone the start date
+  let currentDate = new Date(tableStartDate.getTime())
+
+  // Loop through all dates until we reach the end date (inclusive)
+  while (currentDate <= endDate) {
     const data = calculateProbabilityForDate(currentDate)
+
+    // Format probability to exactly 3 decimal places to match the tweet preview
+    data.probability = Number.parseFloat(data.probability.toFixed(3))
+
     dates.push(data)
 
     // Move to the next day
@@ -100,15 +108,16 @@ Days elapsed: ${data.daysElapsed} of ${data.totalDays} total days
 }
 
 // Format date for display in a compact way to prevent line breaks
+// Ensure dates are displayed in UTC
 function formatDate(dateString: string) {
-  const date = new Date(dateString)
-  return date
-    .toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    })
-    .replace(", ", " ") // Replace comma with space to keep it on one line
+  const date = new Date(dateString + "T00:00:00Z") // Force UTC
+
+  // Use UTC methods to get date components
+  const year = date.getUTCFullYear()
+  const month = date.toLocaleString("en-US", { month: "short", timeZone: "UTC" })
+  const day = date.getUTCDate()
+
+  return `${month} ${day} ${year}`
 }
 
 // Format raw probability value to prevent overflow
@@ -142,6 +151,51 @@ export default function Home() {
     }
     error?: string
   } | null>(null)
+  const router = useRouter()
+
+  // Initialize session token on page load
+  useEffect(() => {
+    async function initSession() {
+      try {
+        // Call the session endpoint to generate a session token
+        await fetch("/api/auth/session")
+      } catch (error) {
+        console.error("Failed to initialize session:", error)
+      }
+    }
+
+    initSession()
+  }, [])
+
+  const handleTriggerCron = async () => {
+    try {
+      setIsLoading(true)
+      setResult(null)
+
+      // Call the cron endpoint directly with test=true parameter
+      const response = await fetch("/api/cron?test=true")
+
+      const data = await response.json()
+      setResult(data)
+
+      if (data.success) {
+        setApiStatus("working")
+      } else {
+        setApiStatus("error")
+        console.error("Cron trigger error:", data.error || data.message)
+      }
+    } catch (error) {
+      setApiStatus("error")
+      console.error("Error triggering cron job:", error)
+      setResult({
+        success: false,
+        message: "An error occurred while triggering the cron job",
+        error: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   // Initialize the date selector with today's date and generate all dates
   useEffect(() => {
@@ -253,34 +307,6 @@ export default function Home() {
   // Check if selected date is before the start date
   const isBeforeStartDate = selectedDate ? new Date(selectedDate + "T00:00:00Z") < START_DATE : false
 
-  const handleTriggerCron = async () => {
-    try {
-      setIsLoading(true)
-      setResult(null)
-
-      const response = await fetch("/api/trigger-cron")
-      const data = await response.json()
-      setResult(data)
-
-      if (data.success) {
-        setApiStatus("working")
-      } else {
-        setApiStatus("error")
-        console.error("Cron trigger error:", data.error || data.message)
-      }
-    } catch (error) {
-      setApiStatus("error")
-      console.error("Error triggering cron job:", error)
-      setResult({
-        success: false,
-        message: "An error occurred while triggering the cron job",
-        error: error instanceof Error ? error.message : String(error),
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
   // Copy tweet text to clipboard
   const copyTweetToClipboard = async () => {
     try {
@@ -302,13 +328,45 @@ export default function Home() {
     window.open(`https://twitter.com/intent/tweet?text=${encodedTweet}`, "_blank")
   }
 
+  // Add logout function
+  const handleLogout = async () => {
+    try {
+      // Clear the auth cookie
+      document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+      document.cookie = "session_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+      // Redirect to login page
+      router.push("/login")
+    } catch (error) {
+      console.error("Logout error:", error)
+    }
+  }
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-background">
       <div className="max-w-2xl w-full space-y-8 bg-card text-card-foreground p-8 rounded-lg border-2 border-gray-700">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold mb-4">Silksong Release Probability Bot</h1>
-          <p className="text-lg mb-6">This bot tweets the probability of Silksong release every day at 00:00 UTC.</p>
-          <p className="text-muted-foreground mb-8">Counting down to December 31, 2025</p>
+        {isDev && (
+          <div className="w-full mb-4 p-2 bg-amber-900/30 text-amber-100 border border-amber-800 rounded-md text-center">
+            <p className="text-sm font-medium">Development Mode - Authentication Bypassed</p>
+          </div>
+        )}
+        <div className="relative mb-8">
+          <div className="text-center">
+            <h1 className="text-3xl font-bold mb-4">Silksong Release Probability Bot</h1>
+            <p className="text-lg mb-6">This bot tweets the probability of Silksong release every day at 00:00 UTC.</p>
+            <p className="text-muted-foreground">Counting down to December 31, 2025</p>
+          </div>
+          {!isDev && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleLogout}
+              className="absolute top-0 right-0 flex items-center gap-1"
+              title="Logout"
+            >
+              <LogOut size={16} />
+              <span className="sr-only">Logout</span>
+            </Button>
+          )}
         </div>
 
         {apiStatus === "error" && (
@@ -338,7 +396,7 @@ export default function Home() {
             {isLoading ? "Posting Tweet..." : "Post Daily Probability Tweet"}
           </Button>
           <Button onClick={handleTriggerCron} disabled={isLoading} variant="secondary" className="w-full">
-            Manually Trigger Cron Job
+            Manually Test Cron Job
           </Button>
 
           <div className="pt-4 border-t border-border">

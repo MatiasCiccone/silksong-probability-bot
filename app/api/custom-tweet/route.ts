@@ -1,11 +1,28 @@
 import { NextResponse } from "next/server"
 import { logger } from "@/lib/logger"
+import { cookies } from "next/headers"
 
 // Post a custom tweet
 export async function POST(request: Request) {
   const requestId = `custom_tweet_${Date.now()}`
 
   try {
+    // Check for API key authentication or session token
+    const apiKey = process.env.API_SECRET_KEY
+    const authHeader = request.headers.get("authorization")
+
+    // Check for session token in cookies
+    const sessionCookie = cookies().get("session_token")
+    const hasValidSession = sessionCookie?.value ? true : false
+
+    if (authHeader !== `Bearer ${apiKey}` && !hasValidSession) {
+      logger.warn(`Unauthorized access attempt to custom-tweet endpoint`, {
+        requestId,
+        headers: Object.fromEntries([...request.headers.entries()]),
+      })
+      return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 })
+    }
+
     // Get the tweet text from the request body
     let requestBody
     try {
@@ -56,6 +73,7 @@ export async function POST(request: Request) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey || ""}`,
       },
       body: JSON.stringify({ text }),
     })

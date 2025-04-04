@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { createOAuthHeader } from "@/lib/twitter-oauth"
 import { retry } from "@/lib/retry"
 import { logger } from "@/lib/logger"
+import { cookies } from "next/headers"
 
 // Function to post a tweet using Twitter API v2 with OAuth 1.0a
 async function postTweet(text: string, requestId: string) {
@@ -97,6 +98,24 @@ export async function POST(request: Request) {
   const requestId = `twitter_v2_${Date.now()}`
 
   try {
+    // Check for API key authentication or session token
+    const apiKey = process.env.API_SECRET_KEY
+    const authHeader = request.headers.get("authorization")
+    const isCronJob = request.headers.get("x-cron-job") === "true"
+
+    // Check for session token in cookies
+    const sessionCookie = cookies().get("session_token")
+    const hasValidSession = sessionCookie?.value ? true : false
+
+    // Skip auth check if this is called from the cron job or has valid session
+    if (!isCronJob && authHeader !== `Bearer ${apiKey}` && !hasValidSession) {
+      logger.warn(`Unauthorized access attempt to twitter-v2 endpoint`, {
+        requestId,
+        headers: Object.fromEntries([...request.headers.entries()]),
+      })
+      return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 })
+    }
+
     // Get the tweet text from the request body
     let requestBody
     try {
